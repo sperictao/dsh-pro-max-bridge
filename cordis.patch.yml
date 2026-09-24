@@ -1,0 +1,3 @@
+- insert:
+    - id: dsh-pro-max-bridge
+      name: '@dsh-external/dsh-pro-max-bridge'

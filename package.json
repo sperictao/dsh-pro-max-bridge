@@ -1,0 +1,59 @@
+{
+  "name": "@dsh-external/dsh-pro-max-bridge",
+  "description": "Exposes the DeepSeek Harness desktop app's own Plugin Manager and Config Editor to DSH Pro Max",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "lib/index.js",
+  "types": "lib/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./lib/index.d.ts",
+      "default": "./lib/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "files": [
+    "cordis.patch.yml",
+    "lib/**/*.js",
+    "lib/**/*.d.ts",
+    "LICENSE",
+    "README.md"
+  ],
+  "scripts": {
+    "clean": "rimraf lib",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "build": "pnpm run clean && tsc -p tsconfig.build.json",
+    "test": "vitest run",
+    "check": "pnpm run typecheck && pnpm run test && pnpm run build",
+    "pack": "pnpm run build && node scripts/pack.mjs"
+  },
+  "engines": {
+    "node": ">=22.5"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/sperictao/dsh-pro-max-bridge.git"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.4"
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "^4.0.4",
+    "@deepseek-ai/cordis-plugin-loader": "~1.0.5",
+    "@deepseek-ai/dsh-config-editor": "0.1.7-rc.2",
+    "@deepseek-ai/dsh-host-webserver": "0.1.7-rc.2",
+    "@deepseek-ai/dsh-plugin-manager": "0.1.7-rc.2",
+    "@types/node": "^24.10.0",
+    "rimraf": "^6.0.1",
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.4"
+  },
+  "packageManager": "pnpm@10.15.0"
+}

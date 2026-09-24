@@ -1,0 +1,32 @@
+name: release
+on:
+  push:
+    tags: ["v*"]
+permissions:
+  contents: write
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # tag 必须与 package.json 的版本一致：安装 URL 里两者都出现，错开就会发出一个
+      # 名字与内容不符的产物
+      - name: tag matches the package version
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          version="$(node -p "require('./package.json').version")"
+          if [ "$tag" != "$version" ]; then
+            echo "tag $GITHUB_REF_NAME does not match package.json $version" >&2
+            exit 1
+          fi
+      - run: pnpm run check
+      - run: pnpm run pack
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.tgz
