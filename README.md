@@ -16,12 +16,13 @@ application`）。所以管理这个档的插件与配置只有两条路——�
 
 ## 安装（一次性手工步骤）
 
-在桌面应用里粘一次本插件 Release 的 tgz 地址：
+在桌面应用里粘一次本插件的 tgz 地址：
 
 ```
-https://github.com/sperictao/dsh-pro-max-bridge/releases/download/v<X.Y.Z>/dsh-pro-max-bridge-<X.Y.Z>.tgz
+https://github.com/sperictao/dsh-pro-max-bridge/releases/latest/download/dsh-pro-max-bridge.tgz
 ```
 
+这个地址永远指向最新一个 Release（靠 GitHub 的 `latest` 重定向），所以升级桥接也是粘同一条。
 应用到插件目录后即可，之后 DSH Pro Max 自己能管它。
 
 > 为什么不让 DSH Pro Max 代装：它没有进入应用插件安装流程的入口；代装只能靠直写
@@ -73,7 +74,7 @@ capability 裁决，本插件不参与那套授权。应答是 `{ok: true, data}
 ```sh
 pnpm install
 pnpm run check   # typecheck + test + build
-pnpm run pack    # dist/dsh-pro-max-bridge-<version>.tgz
+pnpm run pack    # dist/dsh-pro-max-bridge.tgz（资产名不含版本号，见 scripts/pack.mjs）
 ```
 
 发布：版本号 bump 后打 `v<version>` tag 并推送，CI 校验 tag 与 `package.json` 版本
