@@ -25,6 +25,17 @@ https://github.com/sperictao/dsh-pro-max-bridge/releases/latest/download/dsh-pro
 这个地址永远指向最新一个 Release（靠 GitHub 的 `latest` 重定向），所以升级桥接也是粘同一条。
 应用到插件目录后即可，之后 DSH Pro Max 自己能管它。
 
+**如果那个输入框不收 URL**（本插件的安装说明无法验证官方应用界面的输入形态，只验证了它底层
+的 `installBundle` RPC 接受 tarball 规格）：把 tgz 下载下来解开，用**绝对目录**安装——那是上游
+自己的 agent 技能文档里写的形态，一定可用：
+
+```sh
+curl -L -o /tmp/bridge.tgz \
+  https://github.com/sperictao/dsh-pro-max-bridge/releases/latest/download/dsh-pro-max-bridge.tgz
+mkdir -p /tmp/bridge && tar -xzf /tmp/bridge.tgz -C /tmp/bridge
+# 然后在 Plugins 页安装 /tmp/bridge/package 这个目录
+```
+
 > 为什么不让 DSH Pro Max 代装：它没有进入应用插件安装流程的入口；代装只能靠直写
 > profile，而那正是本插件存在要避免的事。
 
