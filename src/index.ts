@@ -29,7 +29,7 @@
  */
 
 import { randomBytes, timingSafeEqual } from "node:crypto";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
@@ -41,7 +41,6 @@ import type {
   InstallBundleOptions,
   PluginEntryId,
   PluginInfo,
-  PluginInstallRequestId,
   PluginManager,
 } from "@deepseek-ai/dsh-plugin-manager";
 import type { WebRoute } from "@deepseek-ai/dsh-host-webserver";
@@ -87,17 +86,26 @@ export function apply(ctx: Context, config?: BridgeConfig): void {
   const path =
     typeof config?.tokenPath === "string" && config.tokenPath !== "" ? config.tokenPath : DEFAULT_TOKEN_PATH;
   const token = ensureToken(path);
+  const all = routes(ctx, token !== null);
+
+  // ping 无论如何都注册：它不鉴权、不改状态，是调用方判断「桥接在不在」的唯一判据。
+  // token 立不起来时更要注册——否则调用方把「已装但没就绪」误判成「没装」，而重装解决不了
+  // 这个问题，用户唯一的线索只剩应用控制台里那行 console.error
+  for (const route of all.filter((route) => route.open === true)) register(ctx, null, route);
   if (token === null) return;
-  for (const route of routes(ctx)) register(ctx, token, route);
+  // 能力路由没有 token 就不注册：没有鉴权的能力比缺席更糟
+  for (const route of all.filter((route) => route.open !== true)) register(ctx, token, route);
 }
 
-function routes(ctx: Context): Request[] {
+function routes(ctx: Context, ready: boolean): Request[] {
   return [
     {
       method: "GET",
       path: "/ping",
       open: true,
-      handle: () => ({ bridge: "dsh-pro-max-bridge", protocol: PROTOCOL }),
+      // ready=false 表示插件激活了但没能建立 token：调用方据此报「已装但没就绪」，
+      // 而不是「没装」
+      handle: () => ({ bridge: "dsh-pro-max-bridge", protocol: PROTOCOL, ready }),
     },
     {
       method: "GET",
@@ -116,7 +124,6 @@ function routes(ctx: Context): Request[] {
       handle: (body) => {
         const manager = service<PluginManager>(ctx, "pluginManager");
         const options: InstallBundleOptions = {};
-        if (typeof body.requestId === "string") options.requestId = asId<PluginInstallRequestId>(body.requestId);
         if (typeof body.enabled === "boolean") options.enabled = body.enabled;
         if (Array.isArray(body.approvedBuilds)) options.approvedBuilds = strings(body.approvedBuilds, "approvedBuilds");
         return manager.installBundle(text(body, "spec"), options);
@@ -134,9 +141,15 @@ function routes(ctx: Context): Request[] {
         const manager = service<PluginManager>(ctx, "pluginManager");
         const enabled = required(body, "enabled");
         if (typeof enabled !== "boolean") throw new Error('"enabled" must be a boolean');
-        // 插件行与 bundle 是两套开关：行按 entryId，bundle 按包名（上游如此）
-        if (typeof body.pluginId === "string") return manager.setPluginEnabled(asId<PluginEntryId>(body.pluginId), enabled);
-        if (typeof body.bundleName === "string") return manager.setBundleEnabled(body.bundleName, enabled);
+        // 插件行与 bundle 是两套开关：行按 entryId，bundle 按包名（上游如此）。必须恰好给
+        // 一个——两个都给时静默取其一会让调用方以为自己改的是另一个
+        const pluginId = typeof body.pluginId === "string" ? body.pluginId : null;
+        const bundleName = typeof body.bundleName === "string" ? body.bundleName : null;
+        if (pluginId !== null && bundleName !== null) {
+          throw new Error('give exactly one of "pluginId" or "bundleName"');
+        }
+        if (pluginId !== null) return manager.setPluginEnabled(asId<PluginEntryId>(pluginId), enabled);
+        if (bundleName !== null) return manager.setBundleEnabled(bundleName, enabled);
         throw new Error('either "pluginId" or "bundleName" is required');
       },
     },
@@ -177,7 +190,7 @@ function routes(ctx: Context): Request[] {
   ];
 }
 
-function register(ctx: Context, token: string, route: Request): void {
+function register(ctx: Context, token: string | null, route: Request): void {
   const path = `${PREFIX}${route.path}`;
   ctx.effect(
     () =>
@@ -188,7 +201,7 @@ function register(ctx: Context, token: string, route: Request): void {
           // 整体兜底：这个 handler 里任何未捕获异常都会触发应用的崩溃恢复，
           // 那条路径会重置 bundle 列表并禁用第三方插件。宁可回一条 500。
           try {
-            if (route.open !== true && !authorized(req, token)) {
+            if (route.open !== true && (token === null || !authorized(req, token))) {
               send(res, 401, { ok: false, error: "unauthorized" });
               return;
             }
@@ -199,7 +212,14 @@ function register(ctx: Context, token: string, route: Request): void {
             const body = route.method === "POST" ? await readJson(req) : {};
             send(res, 200, { ok: true, data: await route.handle(body) });
           } catch (error) {
-            send(res, 500, { ok: false, error: message(error) });
+            // 兜底自己也要兜底：这里的异常会逃出 handler。上游确实有一道
+            // handle(req,res).catch(...)，但那是它的实现细节、不归本插件管（应用升降级后
+            // 可能不在），而「永不产生未处理异常」是硬约束
+            try {
+              send(res, 500, { ok: false, error: message(error) });
+            } catch {
+              res.destroy();
+            }
           }
         },
       } satisfies WebRoute),
@@ -219,7 +239,10 @@ function service<T>(ctx: Context, name: string): T {
 function ensureToken(path: string): string | null {
   try {
     const existing = readFileSync(path, "utf8").trim();
-    if (existing !== "") return existing;
+    if (existing !== "") {
+      restrict(path);
+      return existing;
+    }
   } catch {
     // 不存在就往下生成；真读不了（权限等）同样在下面写失败时收口
   }
@@ -227,10 +250,21 @@ function ensureToken(path: string): string | null {
   try {
     mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
     writeFileSync(path, `${token}\n`, { mode: 0o600 });
+    restrict(path);
     return token;
   } catch (error) {
     console.error(`[dsh-pro-max-bridge] cannot write ${path}:`, message(error));
     return null;
+  }
+}
+
+/// writeFileSync 的 mode 只在**创建**时生效：文件已存在（被 touch 过、被别的工具建过）时
+/// 权限不会被纠正，README 承诺的 0600 就成了空话。两个分支都显式 chmod 一次
+function restrict(path: string): void {
+  try {
+    chmodSync(path, 0o600);
+  } catch (error) {
+    console.error(`[dsh-pro-max-bridge] cannot restrict ${path}:`, message(error));
   }
 }
 

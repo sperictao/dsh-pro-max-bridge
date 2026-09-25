@@ -2,7 +2,7 @@
 // 这样路由、鉴权、序列化与兜底都能在没有桌面应用的情况下验证——真机只剩「应用
 // 自己的服务确实按这个形状应答」这一件事。
 
-import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Readable } from "node:stream";
@@ -126,12 +126,31 @@ describe("registration", () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  it("registers nothing when the token cannot be written", () => {
+  it("still registers ping when the token cannot be written, and says it is not ready", async () => {
     const { ctx, routes } = fakeCtx();
-    // "/" 是个目录：写它必然失败（EISDIR），token 拿不到
+    // "/" 存在但写不进去（实测 errno EEXIST，Node 把写目录的 EISDIR 改写成了 EEXIST）
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     apply(ctx as any, { tokenPath: "/" });
-    expect(routes.size).toBe(0);
+    // 只有 ping：能力路由没有 token 就不注册（没有鉴权的能力比缺席更糟）。但 ping 必须在——
+    // 否则调用方把「已装但没就绪」误判成「没装」，而重装解决不了
+    expect([...routes.keys()]).toEqual(["/dsh-pro-max-bridge/ping"]);
+    const reply = await call({ routes, token: "", dir: "/" }, "/ping", { token: null });
+    expect(reply.body.data).toEqual({ bridge: "dsh-pro-max-bridge", protocol: 1, ready: false });
+  });
+
+  it("restricts an existing token file that was created with loose permissions", () => {
+    const dir2 = mkdtempSync(join(tmpdir(), "dsh-pro-max-bridge-mode-"));
+    const file = join(dir2, "bridge-token");
+    // 先造一个 0644 的文件：writeFileSync 的 mode 只在创建时生效，不显式 chmod 就永远纠正不了
+    writeFileSync(file, "preexisting\n", { mode: 0o644 });
+    expect(statSync(file).mode & 0o777).toBe(0o644);
+
+    const { ctx } = fakeCtx();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    apply(ctx as any, { tokenPath: file });
+    expect(statSync(file).mode & 0o777).toBe(0o600);
+    expect(readFileSync(file, "utf8").trim()).toBe("preexisting");
+    rmSync(dir2, { recursive: true, force: true });
   });
 });
 
@@ -140,7 +159,7 @@ describe("authorization", () => {
     h = harness();
     const reply = await call(h, "/ping", { token: null });
     expect(reply.status).toBe(200);
-    expect(reply.body.data).toEqual({ bridge: "dsh-pro-max-bridge", protocol: 1 });
+    expect(reply.body.data).toEqual({ bridge: "dsh-pro-max-bridge", protocol: 1, ready: true });
   });
 
   it("refuses every capability route without the token", async () => {
@@ -188,14 +207,12 @@ describe("plugins", () => {
     expect(installBundle).toHaveBeenCalledWith("https://example.test/x.tgz", {});
   });
 
-  it("carries requestId, enabled and approvedBuilds through", async () => {
+  it("carries enabled and approvedBuilds through", async () => {
     const installBundle = vi.fn().mockResolvedValue({ application: "applied" });
     h = harness({ services: { pluginManager: { installBundle } } });
 
-    await call(h, "/plugins/install", {
-      body: { spec: "s", requestId: "r1", enabled: false, approvedBuilds: ["pkg"] },
-    });
-    expect(installBundle).toHaveBeenCalledWith("s", { requestId: "r1", enabled: false, approvedBuilds: ["pkg"] });
+    await call(h, "/plugins/install", { body: { spec: "s", enabled: false, approvedBuilds: ["pkg"] } });
+    expect(installBundle).toHaveBeenCalledWith("s", { enabled: false, approvedBuilds: ["pkg"] });
   });
 
   it("routes enable to the plugin row or the bundle by which id the caller sent", async () => {
@@ -212,6 +229,12 @@ describe("plugins", () => {
     const neither = await call(h, "/plugins/enable", { body: { enabled: true } });
     expect(neither.status).toBe(500);
     expect(neither.body.error).toMatch(/pluginId.*bundleName/);
+
+    // 两个都给：静默取其一会让调用方以为自己改的是另一个
+    await expect(
+      call(h, "/plugins/enable", { body: { pluginId: "e1", bundleName: "b", enabled: true } }),
+    ).resolves.toMatchObject({ status: 500 });
+    expect(setBundleEnabled).toHaveBeenCalledTimes(1);
   });
 
   it("removes a bundle by name", async () => {
@@ -335,5 +358,32 @@ describe("containment", () => {
     h = harness({ services: { pluginManager: { installBundle: vi.fn() } } });
     expect((await call(h, "/plugins/install", { body: {} })).body.error).toMatch(/"spec" is required/);
     expect((await call(h, "/plugins/install", { body: { spec: "" } })).body.error).toMatch(/non-empty string/);
+  });
+});
+
+describe("containment of the containment", () => {
+  it("does not let a failing error response escape the handler", async () => {
+    // 兜底自己抛出去就会变成未处理异常——而那道防线不归本插件管（应用升降级后可能不在）
+    h = harness({ services: { pluginManager: { listPlugins: vi.fn().mockRejectedValue(new Error("boom")) } } });
+    const handler = h.routes.get("/dsh-pro-max-bridge/plugins")!;
+
+    let destroyed = false;
+    const req = Readable.from([]) as unknown as IncomingMessage;
+    req.method = "GET";
+    req.headers = { authorization: `Bearer ${h.token}` };
+    const res = {
+      setHeader: () => undefined,
+      end: () => {
+        throw new Error("write EPIPE");
+      },
+      destroy: () => {
+        destroyed = true;
+      },
+    } as unknown as ServerResponse;
+    Object.defineProperty(res, "statusCode", { set: () => undefined, get: () => 0 });
+
+    // handler 必须自己收住：既不 reject，也不让异常逃出去
+    await expect(handler(req, res)).resolves.toBeUndefined();
+    expect(destroyed).toBe(true);
   });
 });

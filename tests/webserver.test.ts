@@ -53,7 +53,7 @@ describe("the real web server accepts the bridge", () => {
     // 重复的 (kind, path) 在真 WebServer 上会抛——能走到这里就说明 7 条路径互不冲突
     const ping = await get(`${PREFIX}/ping`, { token: null });
     expect(ping.status).toBe(200);
-    expect(ping.body).toEqual({ ok: true, data: { bridge: "dsh-pro-max-bridge", protocol: 1 } });
+    expect(ping.body).toEqual({ ok: true, data: { bridge: "dsh-pro-max-bridge", protocol: 1, ready: true } });
   });
 
   it("keeps the routes exact, so the prefix itself is not a route", async () => {

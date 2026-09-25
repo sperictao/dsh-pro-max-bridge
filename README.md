@@ -43,11 +43,11 @@ capability 裁决，本插件不参与那套授权。应答是 `{ok: true, data}
 
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
-| `GET` | `/ping` | 免 token。返回 `{bridge, protocol}`：DSH Pro Max 用它判断桥接在不在、是否同代 |
+| `GET` | `/ping` | 免 token。返回 `{bridge, protocol, ready}`：DSH Pro Max 用它判断桥接在不在、是否同代、**是否就绪**（`ready:false` 表示插件激活了但没能建立 token——那时能力路由一条都不注册，重装也解决不了，唯一的线索是应用控制台） |
 | `GET` | `/plugins` | `{plugins, bundles}` |
-| `POST` | `/plugins/install` | `{spec, requestId?, enabled?, approvedBuilds?}` → `ChangeResult` |
+| `POST` | `/plugins/install` | `{spec, enabled?, approvedBuilds?}` → `ChangeResult`。**不接 requestId**：本插件没有按 id 查询/取消的路由，收下它就是承诺一件做不到的事 |
 | `POST` | `/plugins/remove` | `{name}` → `ChangeResult` |
-| `POST` | `/plugins/enable` | `{pluginId?, bundleName?, enabled}` → `ChangeResult` |
+| `POST` | `/plugins/enable` | `{pluginId? \| bundleName?, enabled}` → `ChangeResult`。**恰好给一个**：两个都给会被拒（静默取其一会让调用方以为改的是另一个） |
 | `GET` | `/config` | 活动 profile 各行配置（`id` / `name` / `current` / `inherited` / `override`） |
 | `POST` | `/config/edit` | `{id, config}` → 写入该行的绝对 `config` |
 
@@ -58,8 +58,11 @@ capability 裁决，本插件不参与那套授权。应答是 `{ok: true, data}
 `protocol` 在路由形状或字段语义变化时 +1。DSH Pro Max 见到不认识的 protocol 会提示
 升级桥接，而不是把字段缺失当成应用故障。
 
+请求体上限 1 MiB，超限回 500（错误文案里带字节数）。
+
 ## 三条硬约束（上游行为，不是本插件的偏好）
 
+- **别装两次**：重复激活会让第二次注册同一条精确路由而抛（`webserver: duplicate exact route`），cordis 包得住——已工作的那个实例不受影响，最坏是插件列表里多一个激活失败的条目。
 - **只增路由，不接管 `connection`**：桌面 shell 启动时要向宿主根路径要一次
   `303 + set-cookie` 换取 host cookie，替换 connection 会让这条握手失败并直接进崩溃
   恢复。
@@ -80,6 +83,8 @@ pnpm run pack    # dist/dsh-pro-max-bridge.tgz（资产名不含版本号，见 
 发布：版本号 bump 后打 `v<version>` tag 并推送，CI 校验 tag 与 `package.json` 版本
 一致、跑 `check`、打 tgz 并挂到 Release。
 
-`tests/bridge.test.ts` 用一个替身 ctx 驱动真实 handler，覆盖路由、鉴权、
-序列化（活的 Loader `Entry` 带循环引用，过不了 JSON）与兜底。真机只剩「应用自己的
-服务确实按这个形状应答」这一件事。
+两层测试：`tests/bridge.test.ts` 用替身 ctx 驱动真实 handler（路由、鉴权、序列化——活的
+Loader `Entry` 带循环引用过不了 JSON、兜底、以及兜底自己的兜底）；`tests/webserver.test.ts`
+用**真实的** `@deepseek-ai/dsh-host-webserver` 起服务，验注册不撞、`kind: 'exact'` 精确匹配、
+404/405/401 的次序。真机只剩「应用自己的服务确实按这个形状应答」这一件事——那条由 DSH Pro Max
+侧的 `bridges_the_live_channel` 探针覆盖。
