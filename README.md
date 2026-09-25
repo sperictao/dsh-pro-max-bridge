@@ -34,6 +34,10 @@ https://github.com/sperictao/dsh-pro-max-bridge/releases/latest/download/dsh-pro
 （0600），DSH Pro Max 读同一份。**它是纵深防御而不是安全边界**：同用户的本地进程
 本就能直写那个 profile，token 挡的是浏览器页面之类对本机回环端口的越权调用。
 
+另外，`/config/edit` **不是「纯数据」路由**：它能持久化 `!!js` 表达式（`{__jsExpr: …}` →
+补丁里的 `tag:yaml.org,2002:js` 标量），而 loader 会求值它。这不构成提权——拿到 token 的人
+本来就能 `installBundle` 装任意包，等价于代码执行——但「token 泄露只影响配置数据」是错的。
+
 ## 线协议
 
 路由一律在 `/dsh-pro-max-bridge/*`，即 `/api` 之外——`/api` 前缀由连接插件按
@@ -60,7 +64,7 @@ capability 裁决，本插件不参与那套授权。应答是 `{ok: true, data}
 
 请求体上限 1 MiB，超限回 500（错误文案里带字节数）。
 
-## 三条硬约束（上游行为，不是本插件的偏好）
+## 硬约束（上游行为，不是本插件的偏好）
 
 - **别装两次**：重复激活会让第二次注册同一条精确路由而抛（`webserver: duplicate exact route`），cordis 包得住——已工作的那个实例不受影响，最坏是插件列表里多一个激活失败的条目。
 - **只增路由，不接管 `connection`**：桌面 shell 启动时要向宿主根路径要一次
