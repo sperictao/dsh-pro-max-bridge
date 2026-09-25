@@ -1,7 +1,7 @@
 {
   "name": "@dsh-external/dsh-pro-max-bridge",
   "description": "Exposes the DeepSeek Harness desktop app's own Plugin Manager and Config Editor to DSH Pro Max",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "private": true,
   "type": "module",
   "main": "lib/index.js",
