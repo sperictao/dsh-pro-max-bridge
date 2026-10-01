@@ -16,11 +16,25 @@ application`）。所以管理这个档的插件与配置只有两条路——�
 
 ## 安装（一次性手工步骤）
 
-在桌面应用里粘一次本插件的 tgz 地址：
+在桌面应用的 Plugins 页粘一次 DSH Pro Max 界面上显示的安装串，形如：
 
 ```
-https://github.com/sperictao/dsh-pro-max-bridge/releases/latest/download/dsh-pro-max-bridge.tgz
+@sperictao/dsh-pro-max-bridge@0.1.5
 ```
 
-这个地址永远指向最新一个 Release（靠 GitHub 的 `latest` 重定向），所以升级桥接也是粘同一条。
-实测（2026-09-25）：该界面**接受 tarball URL**，直接粘上面这条即可，之后 DSH Pro Max 自己能管它。
+版本号由 DSH Pro Max 钉住：它给出的永远是自己测过、协议代次对得上的那一版，升级桥接也是粘它新给的那条。
+
+### 为什么走 npm registry、而且钉精确版本
+
+桌面应用内嵌的 pnpm（0.2.0-rc.2 时仍是 11.7.0）对**远程 tarball 地址**有缺陷：该地址的包已在本机
+store 里时，它复用缓存而不下载，写出的 lockfile 条目缺 `integrity`，随即又被自己的供应链检查拒掉
+（`ERR_PNPM_MISSING_TARBALL_INTEGRITY`）——卸载后重装同一地址必然复现，且每次重试都一样。registry
+包的 integrity 来自 registry 元数据，不受此影响。
+
+钉精确版本是因为 pnpm 11 默认拦截发布不满 24 小时的版本：精确版本照装，dist-tag 与范围则会
+**静默解析到更旧的版本**而报成功。
+
+### 从旧安装迁移
+
+旧版本以 `@dsh-external/dsh-pro-max-bridge`（tarball 地址）安装。包名不同，两者会注册同一组路由，
+所以**先在 Plugins 页移除旧的那个**，再粘新的安装串。

@@ -4,6 +4,8 @@ on:
     tags: ["v*"]
 permissions:
   contents: write
+  # npm trusted publishing：用 OIDC 换一次性发布凭据，仓库里不存长期 token，provenance 自动附带
+  id-token: write
 jobs:
   release:
     runs-on: ubuntu-latest
@@ -12,11 +14,14 @@ jobs:
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
           cache: pnpm
+          registry-url: https://registry.npmjs.org
+      # trusted publishing 要求 npm >= 11.5.1
+      - run: npm install -g npm@^11.5.1
       - run: pnpm install --frozen-lockfile
-      # tag 必须与 package.json 的版本一致：安装 URL 里两者都出现，错开就会发出一个
-      # 名字与内容不符的产物
+      # tag 必须与 package.json 的版本一致：DSH Pro Max 钉的是 `包名@版本`，错开就会
+      # 发出一个与 tag 对不上的版本
       - name: tag matches the package version
         run: |
           tag="${GITHUB_REF_NAME#v}"
@@ -26,7 +31,15 @@ jobs:
             exit 1
           fi
       - run: pnpm run check
-      - run: pnpm run pack
+      # 已在 registry 上的版本跳过：首个版本须本地手工发布（npm 只允许给已存在的包配置
+      # trusted publisher），它的 tag 推上来时不应因「版本已存在」而失败
+      - name: publish to npm
+        run: |
+          name="$(node -p "require('./package.json').name")"
+          version="$(node -p "require('./package.json').version")"
+          if npm view "$name@$version" version >/dev/null 2>&1; then
+            echo "$name@$version is already on the registry; skipping publish"
+          else
+            npm publish
+          fi
       - uses: softprops/action-gh-release@v2
-        with:
-          files: dist/*.tgz
